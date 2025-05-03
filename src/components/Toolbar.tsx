@@ -1,9 +1,8 @@
-
 import React from 'react';
 import { useWhiteboard, DrawingTool } from '../contexts/WhiteboardContext';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { Pencil, Line, Square, Circle, SquareDashed, Eraser, Undo, Redo, Download, Trash2 } from 'lucide-react';
+import { Pencil, StraightLine, Square, Circle, SquareDashed, Eraser, Undo, Redo, Download, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Slider } from '@/components/ui/slider';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -106,7 +105,7 @@ const Toolbar = () => {
           onClick={() => setTool('line')}
           label="Line"
         >
-          <Line size={20} />
+          <StraightLine size={20} />
         </ToolButton>
         
         <ToolButton
