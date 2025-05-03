@@ -1,9 +1,10 @@
-
 import React, { useEffect, useState, useRef } from 'react';
 import { useWhiteboard, DrawingElement } from '../contexts/WhiteboardContext';
 import { useSocket } from '../contexts/SocketContext';
 import { nanoid } from 'nanoid';
 import UserCursors from './UserCursors';
+import { ref, set, onValue, push } from 'firebase/database';
+import { db } from '@/lib/firebase';
 
 const Whiteboard = () => {
   const {
@@ -21,7 +22,7 @@ const Whiteboard = () => {
     isMoveMode
   } = useWhiteboard();
   
-  const { socket, roomId, users } = useSocket();
+  const { roomId, users, username } = useSocket();
   
   const [startCoords, setStartCoords] = useState<{ x: number; y: number } | null>(null);
   const [resizeHandleActive, setResizeHandleActive] = useState<string | null>(null);
@@ -29,6 +30,51 @@ const Whiteboard = () => {
   // For efficient performance, track points without re-renders
   const currentElementRef = useRef<DrawingElement | null>(null);
   const lastPointRef = useRef<{ x: number, y: number } | null>(null);
+
+  // Listen for drawing updates from other users
+  useEffect(() => {
+    if (!roomId) return;
+
+    const drawingsRef = ref(db, `rooms/${roomId}/drawings`);
+    const unsubscribe = onValue(drawingsRef, (snapshot) => {
+      const drawingsData = snapshot.val() || {};
+      const newElements = Object.values(drawingsData).map((drawing: any) => ({
+        id: drawing.id,
+        tool: drawing.tool,
+        points: drawing.points,
+        color: drawing.color,
+        lineWidth: drawing.lineWidth
+      }));
+      setElements(newElements);
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [roomId]);
+
+  // Track mouse position for cursor sharing
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (roomId) {
+        const canvas = canvasRef.current;
+        if (canvas) {
+          const rect = canvas.getBoundingClientRect();
+          const x = e.clientX - rect.left;
+          const y = e.clientY - rect.top;
+          
+          // Update cursor position in Firebase
+          const cursorRef = ref(db, `rooms/${roomId}/users/${username}/cursor`);
+          set(cursorRef, { x, y });
+        }
+      }
+    };
+    
+    document.addEventListener('mousemove', handleMouseMove);
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+    };
+  }, [roomId, username]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -51,28 +97,6 @@ const Whiteboard = () => {
       window.removeEventListener('resize', resizeCanvas);
     };
   }, [canvasRef]);
-
-  // Track mouse position for cursor sharing
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (socket && roomId) {
-        const canvas = canvasRef.current;
-        if (canvas) {
-          const rect = canvas.getBoundingClientRect();
-          const x = e.clientX - rect.left;
-          const y = e.clientY - rect.top;
-          
-          // In a real app:
-          // socket.emit('cursor-move', { roomId, x, y });
-        }
-      }
-    };
-    
-    document.addEventListener('mousemove', handleMouseMove);
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-    };
-  }, [socket, roomId]);
 
   const getCanvasCoordinates = (e: React.MouseEvent | React.TouchEvent) => {
     const canvas = canvasRef.current;
@@ -566,7 +590,6 @@ const Whiteboard = () => {
 
   const finishDrawing = (e: React.MouseEvent | React.TouchEvent) => {
     if (resizeHandleActive) {
-      // Finish resize operation
       setResizeHandleActive(null);
       saveCanvasState();
       return;
@@ -577,7 +600,6 @@ const Whiteboard = () => {
     }
     
     if (isMoveMode && selectedElement) {
-      // We've moved an element, save the canvas state
       saveCanvasState();
       setStartCoords(null);
       return;
@@ -618,31 +640,25 @@ const Whiteboard = () => {
       
       setElements(prevElements => [...prevElements, newElement]);
       
-      // Send to other users via socket
-      if (socket && roomId) {
-        socket.emit('drawing', {
-          roomId,
-          element: newElement
-        });
+      // Save to Firebase
+      if (roomId) {
+        const drawingsRef = ref(db, `rooms/${roomId}/drawings`);
+        const newDrawingRef = push(drawingsRef);
+        set(newDrawingRef, newElement);
       }
     } else if (tool === 'pencil' || tool === 'eraser') {
-      // For pencil/eraser, the elements already updated during drawing
-      // But we can send the final element to other users
-      if (currentElementRef.current && socket && roomId) {
-        socket.emit('drawing', {
-          roomId,
-          element: currentElementRef.current
-        });
+      if (currentElementRef.current && roomId) {
+        const drawingsRef = ref(db, `rooms/${roomId}/drawings`);
+        const newDrawingRef = push(drawingsRef);
+        set(newDrawingRef, currentElementRef.current);
       }
     }
     
-    // Reset state
     setIsDrawing(false);
     setStartCoords(null);
     currentElementRef.current = null;
     lastPointRef.current = null;
     
-    // Save canvas state for undo/redo
     saveCanvasState();
   };
 

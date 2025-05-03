@@ -1,10 +1,9 @@
-
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import io, { Socket } from 'socket.io-client';
+import { ref, onValue, set, push, remove, onDisconnect, serverTimestamp } from 'firebase/database';
+import { db } from '@/lib/firebase';
 import { toast } from 'sonner';
 
 interface SocketContextProps {
-  socket: Socket | null;
   roomId: string | null;
   setRoomId: (id: string | null) => void;
   connected: boolean;
@@ -26,11 +25,7 @@ export const useSocket = () => {
   return context;
 };
 
-// This would be your actual Socket.IO server URL in production
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001';
-
 export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [socket, setSocket] = useState<Socket | null>(null);
   const [roomId, setRoomId] = useState<string | null>(null);
   const [connected, setConnected] = useState<boolean>(false);
   const [username, setUsername] = useState<string>(() => {
@@ -38,81 +33,57 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   });
   const [users, setUsers] = useState<Array<{ id: string, name: string, cursor: { x: number, y: number } }>>([]);
 
-  // Initialize socket connection
+  // Initialize Firebase connection
   useEffect(() => {
-    // For this demo, we'll simulate socket connection
-    // In a real app, you would connect to your Socket.IO server
-    const simulateSocket = {
-      id: 'simulated-socket-id',
-      on: (event: string, callback: Function) => {
-        console.log(`Socket event registered: ${event}`);
-      },
-      emit: (event: string, data: any) => {
-        console.log(`Socket event emitted: ${event}`, data);
-      },
-      off: (event: string, callback?: Function) => {
-        console.log(`Socket event unregistered: ${event}`);
-      },
-      connected: true
-    };
-
-    setSocket(simulateSocket as unknown as Socket);
     setConnected(true);
-    
-    toast.success("Connected to collaborative whiteboard (simulated)");
+    toast.success("Connected to collaborative whiteboard");
 
-    // In a real application, you would do:
-    // const newSocket = io(SOCKET_URL);
-    // setSocket(newSocket);
-    
-    // newSocket.on('connect', () => {
-    //   setConnected(true);
-    //   toast.success("Connected to collaborative whiteboard");
-    // });
-    
-    // newSocket.on('disconnect', () => {
-    //   setConnected(false);
-    //   toast.error("Disconnected from whiteboard server");
-    // });
-    
-    // newSocket.on('users-update', (updatedUsers) => {
-    //   setUsers(updatedUsers);
-    // });
-
-    // return () => {
-    //   newSocket.disconnect();
-    // };
+    return () => {
+      if (roomId) {
+        leaveRoom();
+      }
+    };
   }, []);
 
-  // Save username to localStorage
+  // Save username to localStorage and update in Firebase if in a room
   useEffect(() => {
     localStorage.setItem('whiteboard-username', username);
     
-    if (socket && roomId) {
-      socket.emit('update-username', { roomId, username });
+    if (roomId) {
+      const userRef = ref(db, `rooms/${roomId}/users/${username}`);
+      set(userRef, {
+        name: username,
+        cursor: { x: 0, y: 0 },
+        lastSeen: serverTimestamp()
+      });
     }
-  }, [username, socket, roomId]);
-
-  // Generate room ID (would normally come from the server)
-  const generateRoomId = () => {
-    return Math.random().toString(36).substring(2, 9);
-  };
+  }, [username, roomId]);
 
   const createRoom = () => {
-    const newRoomId = generateRoomId();
+    const newRoomId = Math.random().toString(36).substring(2, 9);
     setRoomId(newRoomId);
     
-    // In a real app with socket.io:
-    // socket?.emit('create-room', { roomId: newRoomId, username });
-    
+    // Create room in Firebase
+    const roomRef = ref(db, `rooms/${newRoomId}`);
+    set(roomRef, {
+      createdAt: serverTimestamp(),
+      createdBy: username
+    });
+
+    // Add user to room
+    const userRef = ref(db, `rooms/${newRoomId}/users/${username}`);
+    set(userRef, {
+      name: username,
+      cursor: { x: 0, y: 0 },
+      lastSeen: serverTimestamp()
+    });
+
+    // Set up cleanup on disconnect
+    onDisconnect(userRef).remove();
+
     toast.success(`Room created: ${newRoomId}`, {
       description: "Share this code with others to collaborate"
     });
-    
-    // Simulate users joining (would come from server in real app)
-    setUsers([
-      { id: 'current-user', name: username, cursor: { x: 0, y: 0 } }
-    ]);
   };
 
   const joinRoom = (roomToJoin: string) => {
@@ -123,22 +94,25 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     
     setRoomId(roomToJoin);
     
-    // In a real app:
-    // socket?.emit('join-room', { roomId: roomToJoin, username });
-    
+    // Add user to room
+    const userRef = ref(db, `rooms/${roomToJoin}/users/${username}`);
+    set(userRef, {
+      name: username,
+      cursor: { x: 0, y: 0 },
+      lastSeen: serverTimestamp()
+    });
+
+    // Set up cleanup on disconnect
+    onDisconnect(userRef).remove();
+
     toast.success(`Joined room: ${roomToJoin}`);
-    
-    // Simulate users in room (would come from server in real app)
-    setUsers([
-      { id: 'host-user', name: 'Room Host', cursor: { x: 100, y: 100 } },
-      { id: 'current-user', name: username, cursor: { x: 0, y: 0 } }
-    ]);
   };
 
   const leaveRoom = () => {
     if (roomId) {
-      // In a real app:
-      // socket?.emit('leave-room', { roomId });
+      // Remove user from room
+      const userRef = ref(db, `rooms/${roomId}/users/${username}`);
+      remove(userRef);
       
       setRoomId(null);
       setUsers([]);
@@ -146,10 +120,29 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   };
 
+  // Listen for room updates
+  useEffect(() => {
+    if (!roomId) return;
+
+    const roomRef = ref(db, `rooms/${roomId}/users`);
+    const unsubscribe = onValue(roomRef, (snapshot) => {
+      const usersData = snapshot.val() || {};
+      const usersList = Object.entries(usersData).map(([id, data]: [string, any]) => ({
+        id,
+        name: data.name,
+        cursor: data.cursor || { x: 0, y: 0 }
+      }));
+      setUsers(usersList);
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [roomId]);
+
   return (
     <SocketContext.Provider
       value={{
-        socket,
         roomId,
         setRoomId,
         connected,

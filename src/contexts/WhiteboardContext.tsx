@@ -1,6 +1,7 @@
-
 import React, { createContext, useContext, useState, useRef, useEffect } from 'react';
 import { useSocket } from './SocketContext';
+import { ref, set, remove } from 'firebase/database';
+import { db } from '@/lib/firebase';
 
 export type DrawingTool = 'pencil' | 'line' | 'rectangle' | 'circle' | 'square' | 'eraser' | 'text' | 'move';
 
@@ -29,19 +30,17 @@ interface WhiteboardContextProps {
   isDrawing: boolean;
   setIsDrawing: (isDrawing: boolean) => void;
   history: ImageData[];
-  setHistory: React.Dispatch<React.SetStateAction<ImageData[]>>;
   historyIndex: number;
-  setHistoryIndex: React.Dispatch<React.SetStateAction<number>>;
+  elements: DrawingElement[];
+  setElements: (elements: DrawingElement[]) => void;
+  selectedElement: DrawingElement | null;
+  setSelectedElement: (element: DrawingElement | null) => void;
+  isMoveMode: boolean;
+  setIsMoveMode: (isMoveMode: boolean) => void;
   clearCanvas: () => void;
   undoAction: () => void;
   redoAction: () => void;
-  saveCanvasState: () => void;
   downloadCanvas: () => void;
-  elements: DrawingElement[];
-  setElements: React.Dispatch<React.SetStateAction<DrawingElement[]>>;
-  selectedElement: DrawingElement | null;
-  setSelectedElement: React.Dispatch<React.SetStateAction<DrawingElement | null>>;
-  isMoveMode: boolean;
   toggleMoveMode: () => void;
 }
 
@@ -67,7 +66,7 @@ export const WhiteboardProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [isMoveMode, setIsMoveMode] = useState<boolean>(false);
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const { socket, roomId } = useSocket();
+  const { roomId } = useSocket();
 
   // Initialize canvas
   useEffect(() => {
@@ -87,7 +86,7 @@ export const WhiteboardProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   // Socket event listeners for realtime collaboration
   useEffect(() => {
-    if (!socket || !roomId) return;
+    if (!roomId) return;
 
     const handleDrawingEvent = (drawingData: DrawingElement) => {
       setElements(prevElements => [...prevElements, drawingData]);
@@ -106,14 +105,13 @@ export const WhiteboardProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       clearCanvas();
     };
 
-    socket.on('drawing', handleDrawingEvent);
-    socket.on('clear-canvas', handleClearEvent);
+    // Implement Firebase real-time drawing updates
+    // This is a placeholder and should be replaced with actual Firebase implementation
 
     return () => {
-      socket.off('drawing', handleDrawingEvent);
-      socket.off('clear-canvas', handleClearEvent);
+      // Clean up Firebase listeners
     };
-  }, [socket, roomId]);
+  }, [roomId]);
 
   // Helper function to draw a single element
   const drawElement = (ctx: CanvasRenderingContext2D, element: DrawingElement) => {
@@ -246,9 +244,10 @@ export const WhiteboardProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         setElements([]);
         saveCanvasState();
         
-        // Broadcast clear action if connected
-        if (socket && roomId) {
-          socket.emit('clear-canvas', { roomId });
+        // Clear drawings in Firebase
+        if (roomId) {
+          const drawingsRef = ref(db, `rooms/${roomId}/drawings`);
+          remove(drawingsRef);
         }
       }
     }
@@ -312,23 +311,21 @@ export const WhiteboardProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         setColor,
         lineWidth,
         setLineWidth,
-        canvasRef,
         isDrawing,
         setIsDrawing,
+        canvasRef,
         history,
-        setHistory,
         historyIndex,
-        setHistoryIndex,
-        clearCanvas,
-        undoAction,
-        redoAction,
-        saveCanvasState,
-        downloadCanvas,
         elements,
         setElements,
         selectedElement,
         setSelectedElement,
         isMoveMode,
+        setIsMoveMode,
+        clearCanvas,
+        undoAction,
+        redoAction,
+        downloadCanvas,
         toggleMoveMode
       }}
     >
