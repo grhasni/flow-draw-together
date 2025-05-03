@@ -1,11 +1,16 @@
+
 import React from 'react';
 import { useWhiteboard, DrawingTool } from '../contexts/WhiteboardContext';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { Pencil, StraightLine, Square, Circle, SquareDashed, Eraser, Undo, Redo, Download, Trash2 } from 'lucide-react';
+import { 
+  Pencil, Square, Circle, SquareDashed, Eraser, Undo, 
+  Redo, Download, Trash2, Sun, Moon, Move 
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Slider } from '@/components/ui/slider';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { useTheme } from '@/contexts/ThemeContext';
 
 const ToolButton: React.FC<{
   tool: DrawingTool;
@@ -79,8 +84,12 @@ const Toolbar = () => {
     redoAction,
     downloadCanvas,
     historyIndex,
-    history
+    history,
+    toggleMoveMode,
+    isMoveMode
   } = useWhiteboard();
+  
+  const { theme, toggleTheme } = useTheme();
 
   const COLORS = [
     '#000000', '#ffffff', '#ff0000', '#ff8800', '#ffff00', 
@@ -88,7 +97,7 @@ const Toolbar = () => {
   ];
 
   return (
-    <div className="fixed left-4 top-1/2 transform -translate-y-1/2 flex flex-col gap-2 bg-white p-2 rounded-lg shadow-md">
+    <div className="fixed left-4 top-1/2 transform -translate-y-1/2 flex flex-col gap-2 bg-background/80 backdrop-blur-md p-2 rounded-lg shadow-lg border border-border">
       <div className="flex flex-col space-y-2 mb-2">
         <ToolButton
           tool="pencil"
@@ -105,7 +114,9 @@ const Toolbar = () => {
           onClick={() => setTool('line')}
           label="Line"
         >
-          <StraightLine size={20} />
+          <div className="w-5 h-5 flex items-center justify-center">
+            <div className="w-full h-0.5 bg-current transform rotate-45"></div>
+          </div>
         </ToolButton>
         
         <ToolButton
@@ -143,9 +154,18 @@ const Toolbar = () => {
         >
           <Eraser size={20} />
         </ToolButton>
+        
+        <ToolButton
+          tool="move"
+          active={isMoveMode}
+          onClick={toggleMoveMode}
+          label="Move Elements"
+        >
+          <Move size={20} />
+        </ToolButton>
       </div>
       
-      <div className="border-t border-gray-200 pt-2">
+      <div className="border-t border-border pt-2">
         <Popover>
           <PopoverTrigger asChild>
             <Button 
@@ -174,6 +194,7 @@ const Toolbar = () => {
         </Popover>
 
         <div className="mt-2">
+          <p className="text-xs mb-1 text-foreground">Brush Size: {lineWidth}</p>
           <Slider
             defaultValue={[lineWidth]}
             max={20}
@@ -181,12 +202,12 @@ const Toolbar = () => {
             step={1}
             value={[lineWidth]}
             onValueChange={(vals) => setLineWidth(vals[0])}
-            className="my-4"
+            className="my-2"
           />
         </div>
       </div>
 
-      <div className="border-t border-gray-200 pt-2 flex flex-col space-y-2">
+      <div className="border-t border-border pt-2 flex flex-col space-y-2">
         <ActionButton 
           onClick={undoAction} 
           label="Undo"
@@ -209,6 +230,10 @@ const Toolbar = () => {
         
         <ActionButton onClick={downloadCanvas} label="Download">
           <Download size={20} />
+        </ActionButton>
+        
+        <ActionButton onClick={toggleTheme} label={theme === 'dark' ? 'Light Mode' : 'Dark Mode'}>
+          {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
         </ActionButton>
       </div>
     </div>

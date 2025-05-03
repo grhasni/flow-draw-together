@@ -1,7 +1,22 @@
 
 import React, { createContext, useContext, useState, useRef, useEffect } from 'react';
+import { useSocket } from './SocketContext';
 
-export type DrawingTool = 'pencil' | 'line' | 'rectangle' | 'circle' | 'square' | 'eraser' | 'text';
+export type DrawingTool = 'pencil' | 'line' | 'rectangle' | 'circle' | 'square' | 'eraser' | 'text' | 'move';
+
+interface Point {
+  x: number;
+  y: number;
+}
+
+export interface DrawingElement {
+  id: string;
+  tool: DrawingTool;
+  points: Point[];
+  color: string;
+  lineWidth: number;
+  selected?: boolean;
+}
 
 interface WhiteboardContextProps {
   tool: DrawingTool;
@@ -22,6 +37,12 @@ interface WhiteboardContextProps {
   redoAction: () => void;
   saveCanvasState: () => void;
   downloadCanvas: () => void;
+  elements: DrawingElement[];
+  setElements: React.Dispatch<React.SetStateAction<DrawingElement[]>>;
+  selectedElement: DrawingElement | null;
+  setSelectedElement: React.Dispatch<React.SetStateAction<DrawingElement | null>>;
+  isMoveMode: boolean;
+  toggleMoveMode: () => void;
 }
 
 const WhiteboardContext = createContext<WhiteboardContextProps | null>(null);
@@ -41,9 +62,14 @@ export const WhiteboardProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [isDrawing, setIsDrawing] = useState<boolean>(false);
   const [history, setHistory] = useState<ImageData[]>([]);
   const [historyIndex, setHistoryIndex] = useState<number>(-1);
+  const [elements, setElements] = useState<DrawingElement[]>([]);
+  const [selectedElement, setSelectedElement] = useState<DrawingElement | null>(null);
+  const [isMoveMode, setIsMoveMode] = useState<boolean>(false);
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const { socket, roomId } = useSocket();
 
+  // Initialize canvas
   useEffect(() => {
     const canvas = canvasRef.current;
     if (canvas) {
@@ -59,6 +85,139 @@ export const WhiteboardProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
   }, []);
 
+  // Socket event listeners for realtime collaboration
+  useEffect(() => {
+    if (!socket || !roomId) return;
+
+    const handleDrawingEvent = (drawingData: DrawingElement) => {
+      setElements(prevElements => [...prevElements, drawingData]);
+      
+      // Redraw the received element
+      const canvas = canvasRef.current;
+      if (canvas) {
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          drawElement(ctx, drawingData);
+        }
+      }
+    };
+
+    const handleClearEvent = () => {
+      clearCanvas();
+    };
+
+    socket.on('drawing', handleDrawingEvent);
+    socket.on('clear-canvas', handleClearEvent);
+
+    return () => {
+      socket.off('drawing', handleDrawingEvent);
+      socket.off('clear-canvas', handleClearEvent);
+    };
+  }, [socket, roomId]);
+
+  // Helper function to draw a single element
+  const drawElement = (ctx: CanvasRenderingContext2D, element: DrawingElement) => {
+    ctx.strokeStyle = element.color;
+    ctx.lineWidth = element.lineWidth;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+
+    ctx.beginPath();
+
+    switch (element.tool) {
+      case 'pencil':
+        if (element.points.length > 0) {
+          ctx.moveTo(element.points[0].x, element.points[0].y);
+          element.points.forEach(point => {
+            ctx.lineTo(point.x, point.y);
+          });
+        }
+        ctx.stroke();
+        break;
+      case 'line':
+        if (element.points.length >= 2) {
+          ctx.moveTo(element.points[0].x, element.points[0].y);
+          ctx.lineTo(element.points[1].x, element.points[1].y);
+        }
+        ctx.stroke();
+        break;
+      case 'rectangle':
+        if (element.points.length >= 2) {
+          const width = element.points[1].x - element.points[0].x;
+          const height = element.points[1].y - element.points[0].y;
+          ctx.strokeRect(element.points[0].x, element.points[0].y, width, height);
+        }
+        break;
+      case 'square':
+        if (element.points.length >= 2) {
+          const size = Math.max(
+            Math.abs(element.points[1].x - element.points[0].x),
+            Math.abs(element.points[1].y - element.points[0].y)
+          );
+          const directionX = element.points[1].x >= element.points[0].x ? 1 : -1;
+          const directionY = element.points[1].y >= element.points[0].y ? 1 : -1;
+          ctx.strokeRect(
+            element.points[0].x, 
+            element.points[0].y, 
+            size * directionX, 
+            size * directionY
+          );
+        }
+        break;
+      case 'circle':
+        if (element.points.length >= 2) {
+          const radius = Math.sqrt(
+            Math.pow(element.points[1].x - element.points[0].x, 2) +
+            Math.pow(element.points[1].y - element.points[0].y, 2)
+          );
+          ctx.beginPath();
+          ctx.arc(
+            element.points[0].x, 
+            element.points[0].y, 
+            radius, 
+            0, 
+            2 * Math.PI
+          );
+          ctx.stroke();
+        }
+        break;
+      case 'eraser':
+        if (element.points.length > 0) {
+          // For eraser, use white color
+          ctx.strokeStyle = '#ffffff';
+          ctx.moveTo(element.points[0].x, element.points[0].y);
+          element.points.forEach(point => {
+            ctx.lineTo(point.x, point.y);
+          });
+        }
+        ctx.stroke();
+        break;
+      default:
+        break;
+    }
+
+    ctx.closePath();
+  };
+
+  // Redraw all elements
+  const redrawCanvas = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    // Clear canvas
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    // Draw all elements
+    elements.forEach(element => {
+      drawElement(ctx, element);
+    });
+  };
+
+  // Save canvas state for undo/redo
   const saveCanvasState = () => {
     const canvas = canvasRef.current;
     if (canvas) {
@@ -84,7 +243,13 @@ export const WhiteboardProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if (ctx) {
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
+        setElements([]);
         saveCanvasState();
+        
+        // Broadcast clear action if connected
+        if (socket && roomId) {
+          socket.emit('clear-canvas', { roomId });
+        }
       }
     }
   };
@@ -97,6 +262,8 @@ export const WhiteboardProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         if (ctx) {
           setHistoryIndex(prevIndex => prevIndex - 1);
           ctx.putImageData(history[historyIndex - 1], 0, 0);
+          // Remove the last element
+          setElements(prevElements => prevElements.slice(0, -1));
         }
       }
     }
@@ -110,6 +277,7 @@ export const WhiteboardProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         if (ctx) {
           setHistoryIndex(prevIndex => prevIndex + 1);
           ctx.putImageData(history[historyIndex + 1], 0, 0);
+          // We would need to store elements history for proper redo
         }
       }
     }
@@ -123,6 +291,15 @@ export const WhiteboardProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       link.download = `whiteboard-${new Date().toISOString().slice(0, 10)}.png`;
       link.href = dataURL;
       link.click();
+    }
+  };
+
+  const toggleMoveMode = () => {
+    setIsMoveMode(prev => !prev);
+    if (!isMoveMode) {
+      setTool('move');
+    } else {
+      setTool('pencil');
     }
   };
 
@@ -146,7 +323,13 @@ export const WhiteboardProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         undoAction,
         redoAction,
         saveCanvasState,
-        downloadCanvas
+        downloadCanvas,
+        elements,
+        setElements,
+        selectedElement,
+        setSelectedElement,
+        isMoveMode,
+        toggleMoveMode
       }}
     >
       {children}
