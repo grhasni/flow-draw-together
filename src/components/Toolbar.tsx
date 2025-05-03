@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { useWhiteboard, DrawingTool } from '../contexts/WhiteboardContext';
 import { Button } from '@/components/ui/button';
@@ -97,7 +96,7 @@ const Toolbar = () => {
   ];
 
   return (
-    <div className="fixed left-4 top-1/2 transform -translate-y-1/2 flex flex-col gap-2 bg-background/80 backdrop-blur-md p-2 rounded-lg shadow-lg border border-border">
+    <div className="fixed left-4 top-1/2 transform -translate-y-1/2 flex flex-col gap-2 bg-background/60 backdrop-blur-xl p-3 rounded-xl shadow-xl border border-border/40 hover:bg-background/70 transition-all duration-300">
       <div className="flex flex-col space-y-2 mb-2">
         <ToolButton
           tool="pencil"

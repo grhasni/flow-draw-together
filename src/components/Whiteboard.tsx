@@ -3,7 +3,7 @@ import { useWhiteboard, DrawingElement } from '../contexts/WhiteboardContext';
 import { useSocket } from '../contexts/SocketContext';
 import { nanoid } from 'nanoid';
 import UserCursors from './UserCursors';
-import { ref, set, onValue, push } from 'firebase/database';
+import { ref, set, onChildAdded, push, remove, onDisconnect, onValue } from 'firebase/database';
 import { db } from '@/lib/firebase';
 
 const Whiteboard = () => {
@@ -30,21 +30,19 @@ const Whiteboard = () => {
   // For efficient performance, track points without re-renders
   const currentElementRef = useRef<DrawingElement | null>(null);
   const lastPointRef = useRef<{ x: number, y: number } | null>(null);
+  const lastUpdateTimeRef = useRef<number>(0);
+  const updateThrottleTime = 50; // milliseconds between updates
 
   // Listen for drawing updates from other users
   useEffect(() => {
     if (!roomId) return;
 
     const drawingsRef = ref(db, `rooms/${roomId}/drawings`);
+
+    // Use only onValue for real-time sync
     const unsubscribe = onValue(drawingsRef, (snapshot) => {
       const drawingsData = snapshot.val() || {};
-      const newElements = Object.values(drawingsData).map((drawing: any) => ({
-        id: drawing.id,
-        tool: drawing.tool,
-        points: drawing.points,
-        color: drawing.color,
-        lineWidth: drawing.lineWidth
-      }));
+      const newElements = Object.values(drawingsData) as DrawingElement[];
       setElements(newElements);
     });
 
@@ -281,34 +279,138 @@ const Whiteboard = () => {
     });
   };
 
+  const updateFirebaseDrawing = (element: DrawingElement) => {
+    const now = Date.now();
+    if (now - lastUpdateTimeRef.current < updateThrottleTime) {
+      return;
+    }
+    lastUpdateTimeRef.current = now;
+
+    if (roomId) {
+      const drawingsRef = ref(db, `rooms/${roomId}/drawings`);
+      const newDrawingRef = push(drawingsRef);
+      set(newDrawingRef, element);
+    }
+  };
+
+  const draw = (e: React.MouseEvent | React.TouchEvent) => {
+    if (!isDrawing && !resizeHandleActive && !selectedElement) return;
+    e.preventDefault();
+    
+    const coords = getCanvasCoordinates(e);
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    if (resizeHandleActive && selectedElement) {
+      handleResize(selectedElement, coords, resizeHandleActive);
+      redrawElements();
+      return;
+    } else if (selectedElement && isMoveMode) {
+      handleMove(selectedElement, coords);
+      redrawElements();
+      return;
+    }
+    
+    // Normal drawing operation
+    if (!currentElementRef.current || !startCoords) return;
+    
+    ctx.strokeStyle = tool === 'eraser' ? '#ffffff' : color;
+    ctx.lineWidth = lineWidth;
+    
+    switch (tool) {
+      case 'pencil':
+      case 'eraser':
+        // For pencil/eraser, add point and draw incrementally
+        const newPoint = {x: coords.x, y: coords.y};
+        
+        if (lastPointRef.current) {
+          ctx.beginPath();
+          ctx.moveTo(lastPointRef.current.x, lastPointRef.current.y);
+          ctx.lineTo(coords.x, coords.y);
+          ctx.stroke();
+        }
+        
+        lastPointRef.current = newPoint;
+        
+        // Update the element with the new point
+        if (currentElementRef.current) {
+          currentElementRef.current.points.push(newPoint);
+          updateFirebaseDrawing(currentElementRef.current);
+        }
+        break;
+        
+      case 'line':
+      case 'rectangle':
+      case 'circle':
+      case 'square':
+        // For shapes, we'll redraw the canvas each time for the preview
+        redrawElements();
+        
+        // Draw the current shape preview
+        ctx.beginPath();
+        
+        if (tool === 'line') {
+          ctx.moveTo(startCoords.x, startCoords.y);
+          ctx.lineTo(coords.x, coords.y);
+        } else if (tool === 'rectangle') {
+          const width = coords.x - startCoords.x;
+          const height = coords.y - startCoords.y;
+          ctx.strokeRect(startCoords.x, startCoords.y, width, height);
+        } else if (tool === 'square') {
+          const size = Math.max(
+            Math.abs(coords.x - startCoords.x),
+            Math.abs(coords.y - startCoords.y)
+          );
+          const directionX = coords.x >= startCoords.x ? 1 : -1;
+          const directionY = coords.y >= startCoords.y ? 1 : -1;
+          ctx.strokeRect(
+            startCoords.x,
+            startCoords.y,
+            size * directionX,
+            size * directionY
+          );
+        } else if (tool === 'circle') {
+          const radius = Math.sqrt(
+            Math.pow(coords.x - startCoords.x, 2) +
+            Math.pow(coords.y - startCoords.y, 2)
+          );
+          ctx.arc(startCoords.x, startCoords.y, radius, 0, 2 * Math.PI);
+        }
+        
+        ctx.stroke();
+        break;
+      default:
+        break;
+    }
+  };
+
   const startDrawing = (e: React.MouseEvent | React.TouchEvent) => {
     e.preventDefault();
     const coords = getCanvasCoordinates(e);
     setStartCoords(coords);
     
     if (isMoveMode) {
-      // Check if we're on a resize handle or existing element
       const resizeHandle = getResizeHandleAtPosition(coords);
       if (resizeHandle) {
         setResizeHandleActive(resizeHandle.handle);
         return;
       }
       
-      // Check if we're selecting an element
       const elementAtPosition = getElementAtPosition(coords);
       if (elementAtPosition) {
-        // Update selected element
         setSelectedElement(elementAtPosition);
-        setElements(elements.map(el => ({
+        setElements(prevElements => prevElements.map(el => ({
           ...el,
           selected: el.id === elementAtPosition.id
         })));
         redrawElements();
         return;
       } else {
-        // Deselect if clicked outside
         setSelectedElement(null);
-        setElements(elements.map(el => ({
+        setElements(prevElements => prevElements.map(el => ({
           ...el,
           selected: false
         })));
@@ -334,6 +436,7 @@ const Whiteboard = () => {
     // For pencil and eraser, add to elements immediately
     if (tool === 'pencil' || tool === 'eraser') {
       setElements(prevElements => [...prevElements, newElement]);
+      updateFirebaseDrawing(newElement);
     }
     
     // Setup canvas for drawing
@@ -403,112 +506,6 @@ const Whiteboard = () => {
     }
     
     return null;
-  };
-
-  const draw = (e: React.MouseEvent | React.TouchEvent) => {
-    if (!isDrawing && !resizeHandleActive && !selectedElement) return;
-    e.preventDefault();
-    
-    const coords = getCanvasCoordinates(e);
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    
-    if (resizeHandleActive && selectedElement) {
-      // Handle resize operation
-      handleResize(selectedElement, coords, resizeHandleActive);
-      redrawElements();
-      return;
-    } else if (selectedElement && isMoveMode) {
-      // Handle move operation
-      handleMove(selectedElement, coords);
-      redrawElements();
-      return;
-    }
-    
-    // Normal drawing operation
-    if (!currentElementRef.current || !startCoords) return;
-    
-    ctx.strokeStyle = tool === 'eraser' ? '#ffffff' : color;
-    ctx.lineWidth = lineWidth;
-    
-    switch (tool) {
-      case 'pencil':
-      case 'eraser':
-        // For pencil/eraser, add point and draw incrementally
-        const newPoint = {x: coords.x, y: coords.y};
-        
-        if (lastPointRef.current) {
-          ctx.beginPath();
-          ctx.moveTo(lastPointRef.current.x, lastPointRef.current.y);
-          ctx.lineTo(coords.x, coords.y);
-          ctx.stroke();
-        }
-        
-        lastPointRef.current = newPoint;
-        
-        // Update the element with the new point
-        setElements(prevElements => {
-          const elementsCopy = [...prevElements];
-          const lastIndex = elementsCopy.length - 1;
-          
-          if (lastIndex >= 0) {
-            // Add the point to the current drawing element
-            elementsCopy[lastIndex] = {
-              ...elementsCopy[lastIndex],
-              points: [...elementsCopy[lastIndex].points, newPoint]
-            };
-          }
-          
-          return elementsCopy;
-        });
-        break;
-        
-      case 'line':
-      case 'rectangle':
-      case 'circle':
-      case 'square':
-        // For shapes, we'll redraw the canvas each time for the preview
-        redrawElements();
-        
-        // Draw the current shape preview
-        ctx.beginPath();
-        
-        if (tool === 'line') {
-          ctx.moveTo(startCoords.x, startCoords.y);
-          ctx.lineTo(coords.x, coords.y);
-        } else if (tool === 'rectangle') {
-          const width = coords.x - startCoords.x;
-          const height = coords.y - startCoords.y;
-          ctx.strokeRect(startCoords.x, startCoords.y, width, height);
-        } else if (tool === 'square') {
-          const size = Math.max(
-            Math.abs(coords.x - startCoords.x),
-            Math.abs(coords.y - startCoords.y)
-          );
-          const directionX = coords.x >= startCoords.x ? 1 : -1;
-          const directionY = coords.y >= startCoords.y ? 1 : -1;
-          ctx.strokeRect(
-            startCoords.x,
-            startCoords.y,
-            size * directionX,
-            size * directionY
-          );
-        } else if (tool === 'circle') {
-          const radius = Math.sqrt(
-            Math.pow(coords.x - startCoords.x, 2) +
-            Math.pow(coords.y - startCoords.y, 2)
-          );
-          ctx.arc(startCoords.x, startCoords.y, radius, 0, 2 * Math.PI);
-        }
-        
-        ctx.stroke();
-        break;
-      default:
-        break;
-    }
   };
 
   const handleResize = (element: DrawingElement, coords: { x: number, y: number }, handle: string) => {
@@ -639,18 +636,10 @@ const Whiteboard = () => {
       };
       
       setElements(prevElements => [...prevElements, newElement]);
-      
-      // Save to Firebase
-      if (roomId) {
-        const drawingsRef = ref(db, `rooms/${roomId}/drawings`);
-        const newDrawingRef = push(drawingsRef);
-        set(newDrawingRef, newElement);
-      }
+      updateFirebaseDrawing(newElement);
     } else if (tool === 'pencil' || tool === 'eraser') {
-      if (currentElementRef.current && roomId) {
-        const drawingsRef = ref(db, `rooms/${roomId}/drawings`);
-        const newDrawingRef = push(drawingsRef);
-        set(newDrawingRef, currentElementRef.current);
+      if (currentElementRef.current) {
+        updateFirebaseDrawing(currentElementRef.current);
       }
     }
     

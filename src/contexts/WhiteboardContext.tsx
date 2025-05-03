@@ -26,13 +26,13 @@ interface WhiteboardContextProps {
   setColor: (color: string) => void;
   lineWidth: number;
   setLineWidth: (width: number) => void;
-  canvasRef: React.RefObject<HTMLCanvasElement>;
   isDrawing: boolean;
   setIsDrawing: (isDrawing: boolean) => void;
+  canvasRef: React.RefObject<HTMLCanvasElement>;
   history: ImageData[];
   historyIndex: number;
   elements: DrawingElement[];
-  setElements: (elements: DrawingElement[]) => void;
+  setElements: (elements: DrawingElement[] | ((prev: DrawingElement[]) => DrawingElement[])) => void;
   selectedElement: DrawingElement | null;
   setSelectedElement: (element: DrawingElement | null) => void;
   isMoveMode: boolean;
@@ -42,6 +42,7 @@ interface WhiteboardContextProps {
   redoAction: () => void;
   downloadCanvas: () => void;
   toggleMoveMode: () => void;
+  saveCanvasState: () => void;
 }
 
 const WhiteboardContext = createContext<WhiteboardContextProps | null>(null);
@@ -326,7 +327,8 @@ export const WhiteboardProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         undoAction,
         redoAction,
         downloadCanvas,
-        toggleMoveMode
+        toggleMoveMode,
+        saveCanvasState
       }}
     >
       {children}

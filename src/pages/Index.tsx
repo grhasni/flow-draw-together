@@ -1,5 +1,4 @@
-
-import React, { useState } from 'react';
+import { useState } from 'react';
 import Whiteboard from '@/components/Whiteboard';
 import Toolbar from '@/components/Toolbar';
 import { useWhiteboard } from '@/contexts/WhiteboardContext';
@@ -24,7 +23,7 @@ const Index = () => {
 
   return (
     <div className={`flex w-full h-screen overflow-hidden ${theme === 'dark' ? 'dark' : ''}`}>
-      <div className="absolute top-4 left-4 right-4 flex justify-between items-center z-10">
+      <div className="absolute top-4 left-1/2 transform -translate-x-1/2 flex justify-between items-center z-10 bg-background/60 backdrop-blur-xl px-6 py-3 rounded-xl shadow-xl border border-border/40 hover:bg-background/70 transition-all duration-300 w-auto max-w-3xl space-x-4">
         <h1 className="text-xl font-bold">AG Collaborative Whiteboard</h1>
         
         <div className="flex items-center space-x-4">
@@ -139,8 +138,8 @@ const Index = () => {
         </div>
       </div>
       
-      <div className="w-full h-full p-16">
-        <div className="w-full h-full bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden">
+      <div className="w-full h-full">
+        <div className="w-full h-full bg-white dark:bg-gray-800 overflow-hidden">
           <Whiteboard />
         </div>
       </div>
