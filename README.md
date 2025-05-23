@@ -1,4 +1,8 @@
-# Welcome to your Lovable project
+# Welcome to our Collaborative Whiteboard project
+
+# Developed by:
+Ghulam Rasool - 232508
+Muhammad Abdullah - 232514
 
 ## Project info
 
